@@ -18,7 +18,7 @@ resource "aws_security_group" "ps_app_sg" {
 }
 
 # NSG Rules
-resource "aws_vpc_security_group_ingress_rule" "allow_ssh_22" {
+resource "aws_vpc_security_group_ingress_rule" "app_allow_ssh_22" {
 
   security_group_id = aws_security_group.ps_app_sg.id
   from_port         = 22
@@ -26,7 +26,7 @@ resource "aws_vpc_security_group_ingress_rule" "allow_ssh_22" {
   to_port           = 22
   cidr_ipv4         = var.allowed_cidr_blocks
   tags = {
-    Name = "Allow_SSH"
+    Name = "App_Allow_SSH"
   }
 }
 
@@ -38,23 +38,11 @@ resource "aws_vpc_security_group_ingress_rule" "allow_5000" {
   to_port           = 5000
   cidr_ipv4         = var.allowed_cidr_blocks
   tags = {
-    Name = "Allow_5000"
+    Name = "App_Allow_5000"
   }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "allow_http" {
-
-  security_group_id = aws_security_group.ps_app_sg.id
-  from_port         = 80
-  ip_protocol       = "tcp"
-  to_port           = 80
-  cidr_ipv4         = var.allowed_cidr_blocks
-  tags = {
-    Name = "Allow_http"
-  }
-}
-
-resource "aws_vpc_security_group_egress_rule" "allow_out_all" {
+resource "aws_vpc_security_group_egress_rule" "app_allow_out_all" {
 
   security_group_id = aws_security_group.ps_app_sg.id
   ip_protocol       = "All"
@@ -72,7 +60,7 @@ resource "aws_security_group" "ps_db_sg" {
 
 }
 # NSG Rules
-resource "aws_vpc_security_group_ingress_rule" "allow_ssh_22" {
+resource "aws_vpc_security_group_ingress_rule" "db_allow_ssh_22" {
 
   security_group_id = aws_security_group.ps_db_sg.id
   from_port         = 22
@@ -80,7 +68,7 @@ resource "aws_vpc_security_group_ingress_rule" "allow_ssh_22" {
   to_port           = 22
   cidr_ipv4         = var.allowed_cidr_blocks
   tags = {
-    Name = "Allow_SSH"
+    Name = "Db_Allow_SSH"
   }
 }
 
@@ -92,51 +80,66 @@ resource "aws_vpc_security_group_ingress_rule" "allow_3306" {
   to_port           = 3306
   cidr_ipv4         = var.allowed_cidr_blocks
   tags = {
-    Name = "Allow_5000"
+    Name = "Db_Allow_5000"
   }
 }
 
-resource "aws_vpc_security_group_egress_rule" "allow_out_all" {
+resource "aws_vpc_security_group_egress_rule" "db_allow_out_all" {
 
   security_group_id = aws_security_group.ps_db_sg.id
   ip_protocol       = "All"
   cidr_ipv4         = var.allowed_cidr_blocks
   tags = {
-    Name = "Allow_Out_all"
+    Name = "Db_Allow_Out_all"
   }
 }
 
 # Which service/resources to create
-resource "aws_instance" "app_instance" {
+resource "aws_instance" "db_instance" {
   # Which AMI ID ami-0c1c30571d2dae5c9 (for ubuntu 22.04 lts)
   ami = var.ami_id
   # What type of instance to launch - t2.micro
-  instance_type = var.instance_type
+  instance_type = var.db_instance_type
   # Add a public IP to this instance
   associate_public_ip_address = true
   # Security group
   vpc_security_group_ids = [aws_security_group.ps_db_sg.id]
   # SSH Key pair 
   key_name = var.key_name
+  # User Data
+  user_data = templatefile("prov-db.sh", 
+    {
+      GITHUB_PAT = var.pat
+    }
+  )
   # Name the service/resource we create
   tags = {
     Name = "tech264-priyan-tf-java-db-instance"
   }
 }
+
+
 # Which service/resources to create
 resource "aws_instance" "app_instance" {
+  # Depends on DB VM
+  depends_on = [aws_instance.db_instance]
   # Which AMI ID ami-0c1c30571d2dae5c9 (for ubuntu 22.04 lts)
   ami = var.ami_id
   # What type of instance to launch - t2.micro
-  instance_type = var.instance_type
+  instance_type = var.app_instance_type
   # Add a public IP to this instance
   associate_public_ip_address = true
   # Security group
   vpc_security_group_ids = [aws_security_group.ps_app_sg.id]
   # SSH Key pair 
   key_name = var.key_name
-  # Depends on DB VM
-  depends_on = [ aws_instance.app_instance ]
+  # User Data
+  user_data = templatefile("prov-app.sh",
+    {
+      DB_IP = aws_instance.db_instance.private_ip
+      GITHUB_PAT = var.pat
+    }
+  )
   # Name the service/resource we create
   tags = {
     Name = "tech264-priyan-tf-java-app-instance"
