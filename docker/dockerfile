@@ -1,0 +1,14 @@
+# Use the OpenJDK base image
+FROM maven:3.8.5-openjdk-17-slim
+
+# Set the working directory inside the container
+WORKDIR /usr/app
+
+# Copy the Spring Boot JAR file to the container
+COPY LibraryProject2/target/LibraryProject2-0.0.1-SNAPSHOT.jar library-app.jar
+
+# Expose the port your application runs on (default: 8080)
+EXPOSE 5000
+
+# Run the JAR file
+ENTRYPOINT ["java", "-jar", "library-app.jar"]

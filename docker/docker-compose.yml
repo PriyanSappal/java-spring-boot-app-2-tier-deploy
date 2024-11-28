@@ -1,0 +1,37 @@
+version: '3'  # Defines the version of Docker Compose syntax to use
+
+services:
+  # Define the database service
+  database:
+    image: mysql:8.0  # Use the official MySQL image with version 8.0
+    environment:  # Set environment variables for MySQL container
+      MYSQL_DATABASE: library  # Create a database called 'library'
+      MYSQL_ROOT_PASSWORD: root  # Set the root password for MySQL
+    volumes:  # Mount volumes to persist data and initialize the database
+      - mysql-data:/var/lib/mysql  # Persist MySQL data in a named volume called 'mysql-data'
+      - ./library.sql:/docker-entrypoint-initdb.d/library.sql  # Initialize the database with a SQL file at startup
+    ports:
+      - "3306:3306"  # Expose MySQL's default port 3306 to the host machine's port 3306
+    healthcheck:  # Define a health check for the MySQL container to check if it's ready
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]  # Use 'mysqladmin' to ping MySQL server
+      interval: 10s  # Run the health check every 10 seconds
+      timeout: 5s  # Timeout if the health check takes longer than 5 seconds
+      retries: 3  # Retry 3 times before marking the container as unhealthy
+
+  # Define the application service (Spring Boot app)
+  application:
+    image: priyansappal1/java-app:v1  # Use the Docker image for the Spring Boot application
+    container_name: spring-app  # Name the container 'spring-app'
+    depends_on:  # Ensure the 'application' container only starts when the 'database' container is healthy
+      database:
+        condition: service_healthy  # Wait until the 'database' service is healthy before starting the application
+    environment:  # Set environment variables for the Spring Boot application
+      - DB_HOST=jdbc:mysql://database:3306/library  # Set the MySQL database connection URL
+      - DB_USER=root  # Set the database user (root)
+      - DB_PASS=root  # Set the database password (root)
+    ports:
+      - "5000:5000"  # Expose the Spring Boot app's port 5000 to the host machine's port 5000
+
+# Define the volumes to persist data
+volumes:
+  mysql-data:  # This volume is used by MySQL to store its data persistently

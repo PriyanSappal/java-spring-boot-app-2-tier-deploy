@@ -80,7 +80,7 @@ resource "aws_vpc_security_group_ingress_rule" "allow_3306" {
   to_port           = 3306
   cidr_ipv4         = var.allowed_cidr_blocks
   tags = {
-    Name = "Db_Allow_5000"
+    Name = "Db_Allow_3306"
   }
 }
 

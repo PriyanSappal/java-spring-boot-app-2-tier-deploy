@@ -43,6 +43,12 @@
     - [**Summary**](#summary)
   - [Database](#database)
     - [**Database Provisioning Script**](#database-provisioning-script)
+- [Stage 4: Deploy the app and database on AWS or Azure using containers running on a Virtual Machine (Docker Compose). Automate it via Bash provision scripts that work in user data. (1-2 days).](#stage-4-deploy-the-app-and-database-on-aws-or-azure-using-containers-running-on-a-virtual-machine-docker-compose-automate-it-via-bash-provision-scripts-that-work-in-user-data-1-2-days)
+  - [Pre-requisite information](#pre-requisite-information)
+  - [Step 1: Using Dockerfile we first build an image.](#step-1-using-dockerfile-we-first-build-an-image)
+  - [Step 2: Using `docker-compose.yml` to connect this with our MYSQL DB.](#step-2-using-docker-composeyml-to-connect-this-with-our-mysql-db)
+  - [Step 3: Launching an EC2 instance using terraform.](#step-3-launching-an-ec2-instance-using-terraform)
+  - [Blockers](#blockers)
 
 # Stage 2: Local Deployment of a Java Spring Boot Application with MySQL
 
@@ -550,5 +556,91 @@ echo "MySQL Database VM setup is complete."
 echo "Please ensure this VM's firewall allows access to MySQL on port 3306."
 ```
 
+# Stage 4: Deploy the app and database on AWS or Azure using containers running on a Virtual Machine (Docker Compose). Automate it via Bash provision scripts that work in user data. (1-2 days).
+## Pre-requisite information
+- We will first run it locally.
+    1) We will need to create a `.jar` file. This is done by `mvn clean package -DskipTests` - this essentially skips the tests for now as the way the app works it needs a connection with database to run so for now this will work fine.  
+    2) We will need a `Dockerfile` and `docker-compose.yml` file where your app files are stored. 
+- After this we will run this on an EC2 instance. 
+    1) We will have one instance which we will provision using terraform. Within this we will make sure to first set up a provision script where we have no user data: [docker-provision.sh](docker/docker-provision.sh). We do this to test and see how we can automate our bash script fully. 
+    2) After this we run it with user data. Terraform allows the infrastructure to be provisioned in seconds which makes testing the user data easier. Troubleshooting was made easier whne looking at the logs after `SSH` into the instance: `cat /var/log/cloud-init-output.log`
+
+## Step 1: Using Dockerfile we first build an image. 
+* [Dockerfile](docker/dockerfile) - this is commented. 
+  * We have referenced a base image that will have all the necessary dependencies. 
+  * Copied the `.jar` file. 
+  * Exposed the port `5000`.
+  * Finally we ran it. 
+To execute this:
+1) Build the image: `docker build -t priyansappal1/java-app:v1 .` *Common blocker: not including the `.`.*
+2) We need to push this docker hub so we can access it later when we are deploying it using an EC2 instance: `docker push priyansappal1/java-app:v1`. 
+
+## Step 2: Using `docker-compose.yml` to connect this with our MYSQL DB.
+* We like to be in a habit to test things locally first, therefore we will take [docker-compose.yml](docker/docker-compose.yml) and compose our app. The script is commented to see what steps do what.
+To execute this:
+1) `docker compose up`: from this it will take the image we have created and depending on if the database is ready it will give us our frontpage and the `web/authors` page. 
+2) `docker compose down -v`: this is to remove the containers. 
+
+## Step 3: Launching an EC2 instance using terraform. 
+* [Terraform Script with Docker Compose](docker/terraform/main.tf). This script is similar to the one used in **stage 3** but user data changes as we will need to reference our [docker-compose.yml](docker/docker-compose.yml).
+  * In this we have allowed `SSH`, port `5000` as this is what our application is listening on and port `3306` for our DB connection.
+To execute this:
+1) `terrraform init`: to initialise the repo as a terraform repository.
+2) `terraform plan`: this will plan out the changes that will happen (what will be provisioned).
+3) `terraform apply`: this is a destructive command as it will actually make the EC2 instance with the NSG etc.
+4) `terraform destroy`: this is a destructive command that will destroy the instances and everything else made. Used this when a mistake was made and used `terraform apply` to provision the infrastructure again. 
+* After completing step 3: you will be able to see your desired results `http://<Public-IP>/web/authors`.
+
+## Blockers
+1) With the `docker-compose.yml`, the app container was building first and therefore was not connecting with the DB. The app needs to depend on the database. After adding this to the `database` service:
+```yml
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+```
+And adding this to the `app` service:
+```yml
+    depends_on:
+      database:
+        condition: service_healthy
+```
+The blocker was removed.
+2) The database was not seeded. Added a step from the previous provision script written in **stage 3**:
+```bash
+# Variables
+DB_NAME="library"
+DB_USER="root"
+DB_PASS="password"  # Replace with a secure password
+
+# Update system packages
+sudo apt-get update -y
+sudo apt-get upgrade -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y git curl apt-transport-https ca-certificates software-properties-common
+
+# Installing MySQL to seed the database
+echo "Installing MySQL Server..."
+sudo DEBIAN_FRONTEND=noninteractive apt-get install mysql-server -y
+
+echo "Starting and enabling MySQL service..."
+sudo systemctl start mysql
+sudo systemctl enable mysql
+
+echo "Setting up MySQL database and user..."
+sudo mysql -ppassword -e "CREATE DATABASE IF NOT EXISTS library; CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'password'; GRANT ALL PRIVILEGES ON library.* TO 'root'@'%'; FLUSH PRIVILEGES;"
+
+# May need to change URL as token expires 
+echo "Downloading library.sql file..."
+cd ~
+curl -H "Authorization: token ${GITHUB_PAT}" -o library.sql https://raw.githubusercontent.com/PriyanSappal/java-spring-boot-app/refs/heads/main/library.sql?token=GHSAT0AAAAAACYJ4C47SBYGL66ZKDAGDYW6Z2IO6DQ
+
+echo "Seeding the database..."
+sudo mysql -u $DB_USER -p$DB_PASS $DB_NAME < library.sql
+echo "Database seeded successfully."
+```
+This seeds the database. 
+3) After **2)**, another blocker arose as the `docker compose up` command was running into errors which was that something was using the port `3306` and that was because the `mysql service` was still active. Used `sudo systemctl stop mysql.service` before running `docker compose up`. The service was running to seed the database. 
+  
 
 
