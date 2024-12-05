@@ -49,6 +49,8 @@
   - [Step 2: Using `docker-compose.yml` to connect this with our MYSQL DB.](#step-2-using-docker-composeyml-to-connect-this-with-our-mysql-db)
   - [Step 3: Launching an EC2 instance using terraform.](#step-3-launching-an-ec2-instance-using-terraform)
   - [Blockers](#blockers)
+- [Stage 5: Deploy the app and database on AWS or Azure using Kubernetes (Minikube) running on a Virtual Machine. Automate it via Bash provision scripts that work in user data. The Bash scripts could deploy on Kubernetes via applying YAML definition files or (optional) using a Helm chart. (1-2 days)](#stage-5-deploy-the-app-and-database-on-aws-or-azure-using-kubernetes-minikube-running-on-a-virtual-machine-automate-it-via-bash-provision-scripts-that-work-in-user-data-the-bash-scripts-could-deploy-on-kubernetes-via-applying-yaml-definition-files-or-optional-using-a-helm-chart-1-2-days)
+  - [Noted Minikube Provision Script](#noted-minikube-provision-script)
 
 # Stage 2: Local Deployment of a Java Spring Boot Application with MySQL
 
@@ -579,7 +581,7 @@ To execute this:
 * We like to be in a habit to test things locally first, therefore we will take [docker-compose.yml](docker/docker-compose.yml) and compose our app. The script is commented to see what steps do what.
 To execute this:
 1) `docker compose up`: from this it will take the image we have created and depending on if the database is ready it will give us our frontpage and the `web/authors` page. 
-2) `docker compose down -v`: this is to remove the containers. 
+2) `docker compose down -v`: this is to remove the containers and the volumes too. If you don't remove the volumes, you may run into errors when running `docker compose up`
 
 ## Step 3: Launching an EC2 instance using terraform. 
 * [Terraform Script with Docker Compose](docker/terraform/main.tf). This script is similar to the one used in **stage 3** but user data changes as we will need to reference our [docker-compose.yml](docker/docker-compose.yml).
@@ -607,6 +609,7 @@ And adding this to the `app` service:
         condition: service_healthy
 ```
 The blocker was removed.
+
 2) The database was not seeded. Added a step from the previous provision script written in **stage 3**:
 ```bash
 # Variables
@@ -640,7 +643,173 @@ sudo mysql -u $DB_USER -p$DB_PASS $DB_NAME < library.sql
 echo "Database seeded successfully."
 ```
 This seeds the database. 
+
 3) After **2)**, another blocker arose as the `docker compose up` command was running into errors which was that something was using the port `3306` and that was because the `mysql service` was still active. Used `sudo systemctl stop mysql.service` before running `docker compose up`. The service was running to seed the database. 
   
+# Stage 5: Deploy the app and database on AWS or Azure using Kubernetes (Minikube) running on a Virtual Machine. Automate it via Bash provision scripts that work in user data. The Bash scripts could deploy on Kubernetes via applying YAML definition files or (optional) using a Helm chart. (1-2 days)
 
+[Minikube - Script](kubernetes/prov-minikube.sh)
 
+## Noted Minikube Provision Script
+- This script describes the functions step by step - some code is replaced with notes as this script was used for planning and helped create [Minikube - Script](kubernetes/prov-minikube.sh).
+
+```bash
+#!/bin/bash
+# This script automates the setup of Docker, Minikube, and Kubernetes for deploying and exposing a Java application.
+# Key steps:
+# 1. Provision Docker for container runtime.
+# 2. Provision Minikube to run Kubernetes locally.
+# 3. Configure Minikube addons.
+# 4. Set up NGINX to expose the application via a NodePort service.
+
+# --- Install Minikube ---
+echo "Installing minikube..."
+sudo install minikube-linux-amd64 /usr/local/bin/minikube && rm minikube-linux-amd64
+# Installs Minikube binary to the system path and removes the downloaded file for cleanliness.
+
+echo "Setting driver to Docker"
+minikube config set driver docker
+# Configures Minikube to use Docker as the container runtime driver.
+
+echo "Minikube is configured to use Docker as the driver."
+
+# --- System Update and Upgrade ---
+echo "UPDATE & UPGRADE PACKAGES"
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+# Ensures the system is updated and upgraded to avoid potential compatibility issues.
+
+# --- Docker Installation ---
+echo "Adding Docker's GPG key"
+sudo apt-get install ca-certificates curl
+# Installs essential tools for adding a secure GPG key and setting up Docker repositories.
+
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+# Adds Docker's GPG key securely to verify package authenticity.
+
+echo "Adding repository to Apt sources"
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+# Configures Docker's official repository for apt package manager.
+
+sudo apt-get update
+# Updates apt package list to include Docker packages.
+
+echo "[PROVISIONING DOCKER]: Installing Docker"
+sudo DEBIAN_FRONTEND=noninteractive apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -y
+echo "[PROVISIONING DOCKER]: Complete\n"
+# Installs Docker and related plugins required for containerized applications.
+
+# Ensure the current user has Docker permissions.
+if ! groups ubuntu | grep -q '\bdocker\b'; then
+    echo "[PROVISIONING MINIKUBE]: Adding ubuntu to the docker group..."
+    sudo usermod -aG docker ubuntu
+    echo "[PROVISIONING MINIKUBE]: Restarting script to apply Docker group permissions..."
+    exec sg docker "$0" # Re-runs the script with Docker group permissions.
+    exit
+fi
+
+# --- Minikube Installation ---
+echo "[PROVISIONING MINIKUBE]: Downloading minikube..."
+curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+# Downloads the latest Minikube binary.
+
+echo "[PROVISIONING MINIKUBE]: Installing minikube..."
+sudo install minikube-linux-amd64 /usr/local/bin/minikube && rm minikube-linux-amd64
+# Installs Minikube and cleans up the downloaded file.
+
+# --- Kubernetes Deployment YAML ---
+mkdir /home/ubuntu/app
+# Creates a directory for Kubernetes deployment files.
+
+sudo tee /home/ubuntu/app/app-deploy.yml <<EOF
+# YAML file defines:
+# 1. Persistent volume and claim for database storage.
+# 2. MySQL database deployment and service.
+# 3. Java application deployment and service.
+# 4. ConfigMap for initial SQL scripts.
+
+... # (Full YAML details included below)
+EOF
+# Writes the Kubernetes resource configurations (Persistent Volumes, Deployments, Services, ConfigMaps).
+
+sudo tee /home/ubuntu/app/library.sql <<EOF
+# SQL file with initial data for the MySQL database.
+DROP DATABASE IF EXISTS library;
+CREATE DATABASE library;
+USE library;
+CREATE TABLE authors ...
+EOF
+# Defines the SQL schema and seed data for the application.
+
+# --- Minikube Initialization and NGINX Setup ---
+sudo -u ubuntu -i bash <<'EOF'
+echo "[PROVISIONING MINIKUBE]: Starting Minikube as 'ubuntu' user..."
+minikube start
+minikube status
+echo "[PROVISIONING MINIKUBE]: Exporting Minikube IP"
+MINIKUBE_IP=$(minikube ip)
+# Captures the Minikube cluster IP to use for NGINX proxy configuration.
+
+# --- NGINX Configuration ---
+echo "[PROVISIONING NGINX]: Installing..."
+sudo DEBIAN_FRONTEND=noninteractive apt-get install nginx -y
+sudo sed -i "s|try_files \$uri \$uri/ =404;|proxy_pass http://$MINIKUBE_IP:30001;|" /etc/nginx/sites-available/default
+# Configures NGINX as a reverse proxy to redirect traffic to the Minikube NodePort service.
+
+sudo nginx -t # Verifies NGINX configuration syntax.
+sudo systemctl restart nginx
+# Applies and restarts NGINX to serve the application.
+EOF
+
+# --- Metrics Server and Application Deployment ---
+sudo -u ubuntu -i bash <<'EOF'
+minikube kubectl -- apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# Deploys the Kubernetes metrics server.
+
+minikube kubectl -- patch deployment metrics-server -n kube-system --type='json' -p='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/args/-",
+    "value": "--kubelet-insecure-tls"
+  }
+]'
+# Patches metrics server for insecure kubelet connection (common in local setups).
+
+minikube kubectl -- rollout restart deployment metrics-server -n kube-system
+# Restarts metrics server to apply patches.
+
+minikube kubectl -- apply -f app-deploy.yml
+# Deploys the application and database resources defined in the YAML.
+
+minikube kubectl -- get all
+# Verifies deployment and service status.
+EOF
+```
+
+1) **Persistent Volume and Claim (PVC)**:
+- PersistentVolume (PV - `db-persistent-volume-claim.yaml`): Defines the physical storage, pointing to the host directory /var/lib/mysql.
+- PersistentVolumeClaim (PVC - `db-persistent-volume.yaml`): Requests storage from the PersistentVolume for the MySQL database. The size is set to 100Mi.
+
+2) **Database Deployment (`db-deployment`)**:
+- Deploys a single instance of the MySQL database (replicas: 1).
+- Uses the mysql image and sets up necessary environment variables (MYSQL_ROOT_PASSWORD, MYSQL_DATABASE).
+- Mounts the PVC for persistent data storage and a ConfigMap to initialize the database schema.
+
+3) **Database Service (`java-app-db-svc`)**:
+- Exposes the MySQL database to other services within the cluster via ClusterIP.
+  
+4) **Application Deployment (`app-deployment`)**:
+- Deploys the Java application using the priyansappal1/java-app:v1 Docker image.
+- Includes an initContainer to wait for the database to be ready before launching the application.
+- Configures resource requests and limits to manage resource usage effectively.
+
+5) **Application Service (`java-app-svc`)**:
+- Exposes the Java application using NodePort to allow external access on port 30001.
+
+6) **ConfigMap for SQL Script (`library-sql-configmap`)**: 
+- Stores the initial SQL script as a Kubernetes ConfigMap for database initialization.

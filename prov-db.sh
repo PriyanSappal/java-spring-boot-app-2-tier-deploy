@@ -24,7 +24,7 @@ echo "Setting up MySQL database and user..."
 sudo mysql -ppassword -e "CREATE DATABASE IF NOT EXISTS library; CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'password'; GRANT ALL PRIVILEGES ON library.* TO 'root'@'%'; FLUSH PRIVILEGES;"
 
 echo "Downloading library.sql file..."
-curl -H "Authorization: token ${GITHUB_PAT}" -o library.sql https://raw.githubusercontent.com/PriyanSappal/java-spring-boot-app/refs/heads/main/library.sql?token=GHSAT0AAAAAACYJ4C47Y2DL7UBW7NRIXQAKZ2ELWSA
+curl -H "Authorization: token ${GITHUB_PAT}" -o library.sql https://raw.githubusercontent.com/PriyanSappal/java-spring-boot-app/refs/heads/main/library.sql?token=GHSAT0AAAAAACYJ4C463P2FW4XLDPMN3MEGZ2PDQ7A
 echo "finished downloading library.sql file..."
 
 echo "Seeding the database..."

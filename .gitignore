@@ -23,4 +23,3 @@ variable.tf
 override.tf
 override.tf.json
 
-prov-minikube.sh
